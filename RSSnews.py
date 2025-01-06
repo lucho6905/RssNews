@@ -8,20 +8,62 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 from collections import defaultdict
-from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urlunparse, urljoin
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
+from newspaper import Article
+import json
+import hashlib
+from datetime import datetime, timedelta
+from rss_urls import RSS_FEEDS
+from config import *
+import random
+from news_sender import NewsSender
+import logging
 
+import nltk
 
-# Opciones
+def setup_nltk():
+    """Configura y descarga los recursos necesarios de NLTK"""
+    resources = [
+        'punkt',
+        'punkt_tab',
+        'averaged_perceptron_tagger',
+        'maxent_ne_chunker',
+        'words',
+        'stopwords'
+    ]
+    
+    for resource in resources:
+        try:
+            nltk.data.find(f'tokenizers/{resource}')
+        except LookupError:
+            try:
+                print(f"Descargando recurso NLTK: {resource}")
+                nltk.download(resource, quiet=True)
+            except Exception as e:
+                print(f"Error descargando {resource}: {e}")
+
+# Configurar NLTK antes de cualquier otra operación
+setup_nltk()
+
+# Opciones del navegador
 brave_options = Options()
-brave_options.binary_location = 'C:/Program Files/BraveSoftware/Brave-Browser/Application/Brave.exe'
-driver_path = 'C:/Program Files/BraveSoftware/Brave-Browser/Application/chromedriver.exe'
-service = Service(driver_path)
+brave_options.binary_location = BRAVE_PATH
+brave_options.add_argument('--headless=new')  # Nueva sintaxis para modo headless
+brave_options.add_argument('--disable-gpu')  # Deshabilitar aceleración GPU
+brave_options.add_argument('--no-sandbox')  # Mejorar estabilidad
+brave_options.add_argument('--disable-dev-shm-usage')  # Evitar errores de memoria
+brave_options.add_argument('--log-level=3')  # Minimizar logs
+brave_options.add_argument('--silent')  # Reducir salida de mensajes
+brave_options.add_experimental_option('excludeSwitches', ['enable-logging'])  # Deshabilitar logs de DevTools
+
+service = Service(DRIVER_PATH)
+service.log_path = os.devnull  # Deshabilitar logs del servicio
 driver = webdriver.Chrome(service=service, options=brave_options)
+
 output_directory: str = 'C:/Users/lucho/Downloads/NOTICIAS/Rss'
 
 
@@ -46,6 +88,7 @@ def clean_filename(filename):
         cleaned_filename = cleaned_filename[:max_filename_length]
 
     return cleaned_filename
+
 
 
 # Función para descargar archivos
@@ -91,63 +134,6 @@ def download_file(url, output_folder):
         print(f'Error al descargar el archivo {url}: {e}')
         return None
 
-# URLs del feed RSS
-rss_urls = rss_urls = [
-    
-    "https://trends.google.com/trends/trendingsearches/daily/rss?geo=ES",
-    "https://www.coruna.gal/web/es/rss/noticias",
-    "https://www.laopinioncoruna.es/rss/section/1244710",
-    "https://www.laopinioncoruna.es/rss/section/1612270",
-    "https://www.laopinioncoruna.es/rss/section/1612271",
-    "https://www.laopinioncoruna.es/rss/section/13576",
-    "https://www.laopinioncoruna.es/rss/section/13501",
-    "https://www.laopinioncoruna.es/rss/section/13563",
-    "https://www.laopinioncoruna.es/rss/section/13509",
-    "https://www.laopinioncoruna.es/rss/section/13571",
-    "https://www.laopinioncoruna.es/rss/section/1527708",
-    "https://www.laopinioncoruna.es/rss/section/13668",
-    "https://www.laopinioncoruna.es/rss/section/13659",
-    "https://www.lavozdegalicia.es/coruna/index.xml",
-    "https://www.lavozdegalicia.es/carballo/index.xml",
-    "https://ep00.epimg.net/rss/ccaa/galicia.xml",
-    "https://feeds2.feedburner.com/libertaddigital/nacional",
-    "https://e00-elmundo.uecdn.es/elmundo/rss/espana.xml",
-    "https://thedefiant.io/feed/",
-    "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
-    "https://cointelegraph.com/rss",
-    "https://cryptopotato.com/feed/",
-    "https://cryptoslate.com/feed/",
-    "https://cryptonews.com/news/feed/",
-    "https://smartliquidity.info/feed/",
-    "https://finance.yahoo.com/news/rssindex",
-    "https://www.cnbc.com/id/10000664/device/rss/rss.html",
-    "https://time.com/nextadvisor/feed/",
-    "https://benjaminion.xyz/newineth2/rss_feed.xml",
-    "https://www.boe.es/rss/canal.php?c=prestamos",
-    "https://www.aemet.es/es/noticias.rss",
-    "https://www.aemet.es/documentos_d/eltiempo/prediccion/avisos/rss/CAP_AFAZ711504_RSS.xml",
-    "https://www.aemet.es/documentos_d/eltiempo/prediccion/avisos/rss/CAP_AFAZ711503_RSS.xml",
-    "https://www.aemet.es/documentos_d/eltiempo/prediccion/avisos/rss/CAP_AFAZ711502_RSS.xml",
-    "https://www.aemet.es/documentos_d/eltiempo/prediccion/avisos/rss/CAP_AFAZ711501_RSS.xml",
-    "https://www.boe.es/rss/canal.php?c=imp_amb",
-    "https://xxicoruna.sergas.gal/_layouts/agoracentros/rss.aspx?seccion=SalaComunicacion",
-    "https://xxicoruna.sergas.gal/_layouts/agoracentros/rss.aspx?seccion=Novidades",
-    "https://www.boe.es/rss/canal.php?c=ccolaboracion",
-    "https://www.coruna.gal/web/es/rss/ociocultura",
-    "https://www.coruna.gal/web/es/rss/contenidos",
-    "https://www.coruna.gal/web/es/rss/entidades",
-    "https://www.coruna.gal/web/es/rss/eventos",
-    "https://www.poderjudicial.es/cgpj/es/Poder-Judicial/Tribunal-Supremo/ch.Noticias-Judiciales.formato1/",
-    "https://www.poderjudicial.es/cgpj/es/Poder-Judicial/Audiencia-Nacional/ch.Noticias-Judiciales.formato1/",
-    "https://www.boe.es/rss/canal.php?c=tc",
-    "https://www.boe.es/rss/canal.php?c=fundaciones",
-    "https://www.boe.es/rss/canal.php?c=notariado",
-    "https://www.boe.es/rss/canal.php?c=premios",
-    "https://www.boe.es/rss/canal.php?c=ccolectivos",
-    "https://www.boe.es/rss/canal.php?c=becas",
-    "https://www.boe.es/rss/canal.php?c=ayudas"
-
-]
 # Función para verificar si un elemento contiene palabras clave no deseadas
 def contains_unwanted_keywords(text):
     unwanted_keywords = ["cookies", "banner"]  # Palabras clave no deseadas
@@ -157,12 +143,6 @@ def contains_unwanted_keywords(text):
     return False
 
 
-# Lista de clases no deseadas y etiquetas no deseadas
-unwanted_classes = ["cookies-policy", "ad-banner", "unwanted-class"]
-unwanted_tags = ["script", "style", "css"]
-
-elements_to_extract = ['main', 'div', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'a', 'form', 'article', 'p', 'textarea',
-                       'pre', 'h1', 'h2', 'h3', 'title', 'iframe', 'section', 'body', '.entradilla, .parrafo']
 # Crear un diccionario para almacenar el texto extraído de cada URL
 extracted_text_dict = defaultdict(str)
 
@@ -170,146 +150,226 @@ extracted_text_dict = defaultdict(str)
 processed_urls = set()
 processed_count = 0
 
-# Bucle para procesar las URLs del feed RSS
-for rss_url in rss_urls:
-    # Analizar el feed RSS
-    feed = feedparser.parse(rss_url)
-    # Obtener las entradas del feed RSS
-    for entry in feed.entries:
-        # Obtener los enlaces
-        urls = []
-        possible_link_fields = ['ht_news_item_url', 'guid', 'link']
-        for field in possible_link_fields:
-            if field in entry and entry[field]:
-                urls.append(entry[field])
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/91.0.864.59 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0'
+]
 
-        # Procesar cada enlace si no se ha procesado antes
-        for url in urls:
-            if url and url not in processed_urls:
-                # Verificar si es una URL válida
-                if not re.match(r'^https?://', url):
-                    print(f'URL no válida: {url}')
+def accept_cookies(driver, url):
+    try:
+        driver.get(url)
+        # Botones comunes de cookies
+        cookie_buttons = [
+            "//button[contains(text(), 'Aceptar')]",
+            "//button[contains(text(), 'Entendido')]",
+            "//button[contains(@class, 'cookie')]",
+            "//a[contains(text(), 'Aceptar')]",
+            "//button[contains(text(), 'Accept')]"
+        ]
+        
+        for button in cookie_buttons:
+            try:
+                cookie_button = driver.find_element("xpath", button)
+                cookie_button.click()
+                break
+            except:
+                continue
+                
+        return True
+    except Exception as e:
+        print(f"Error aceptando cookies: {e}")
+        return False
+
+def extract_full_text(url):
+    try:
+        # Primero intentar con Selenium
+        accept_cookies(driver, url)
+        time.sleep(2)  # Esperar a que cargue
+        
+        # Luego extraer con newspaper3k
+        article = Article(url, language='es')
+        article.config.browser_user_agent = random.choice(USER_AGENTS)
+        article.download()
+        article.parse()
+        
+        # Si el texto está vacío o contiene palabras de paywall/cookies, usar Selenium
+        if not article.text or contains_unwanted_keywords(article.text):
+            text = driver.find_element("tag name", "body").text
+            return text
+            
+        return article.text
+    except Exception as e:
+        print(f'Error procesando {url}: {str(e)}')
+        return ""
+
+def process_feed_entry(entry):
+    # Convertir FeedParserDict a diccionario
+    if hasattr(entry, 'title'):
+        title = str(entry.title)
+    else:
+        title = ""
+    
+    if hasattr(entry, 'link'):
+        link = str(entry.link)
+    else:
+        link = ""
+        
+    return {
+        'title': title,
+        'link': link,
+        'published': str(entry.get('published', ''))
+    }
+
+class NewsProcessor:
+    def __init__(self):
+        self.processed_news = self.load_processed_news()
+        self.news_sender = NewsSender()
+        self.logger = logging.getLogger(__name__)
+
+    def load_processed_news(self):
+        try:
+            with open(PROCESSED_NEWS_FILE, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def save_processed_news(self):
+        with open(PROCESSED_NEWS_FILE, 'w') as f:
+            json.dump(self.processed_news, f, indent=2)
+
+    def generate_news_id(self, url, title, date):
+        """Genera un ID único para cada noticia"""
+        content = f"{url}{title}{date}".encode('utf-8')
+        return hashlib.md5(content).hexdigest()
+
+    def extract_keywords(self, article, entry):
+        """Extrae palabras clave de la noticia"""
+        keywords = set()
+        
+        # Extraer keywords del feed RSS
+        possible_keyword_fields = ['category', 'tags', 'keywords']
+        for field in possible_keyword_fields:
+            if hasattr(entry, field):
+                kw = getattr(entry, field)
+                if isinstance(kw, list):
+                    keywords.update(kw)
+                elif isinstance(kw, str):
+                    keywords.update(kw.split(','))
+
+        # Extraer keywords del artículo usando newspaper3k
+        if article.keywords:
+            keywords.update(article.keywords)
+
+        return list(keywords)
+
+    def process_news(self, url, entry):
+        news_id = self.generate_news_id(url, entry['title'], entry.get('published', ''))
+        
+        if news_id in self.processed_news:
+            print(f"Noticia ya procesada: {entry['title']}")
+            return False
+
+        try:
+            article = Article(url, language='es')
+            article.download()
+            article.parse()
+            article.nlp()  # Esto extrae keywords y resumen
+
+            # Generar nombre corto para el archivo
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            short_name = f"{timestamp}_{news_id[:8]}"
+            
+            # Guardar contenido
+            domain_directory = get_output_directory(url)
+            text_path = os.path.join(domain_directory, f"{short_name}.txt")
+            keywords_path = os.path.join(domain_directory, f"{short_name}_keywords.txt")
+
+            # Extraer keywords
+            keywords = self.extract_keywords(article, entry)
+
+            # Guardar contenido principal
+            content = f"""Título: {entry['title']}
+Fecha: {entry.get('published', '')}
+URL: {url}
+Autor: {entry.get('author', '')}
+
+Resumen:
+{article.summary}
+
+Contenido:
+{article.text}
+"""                
+            with open(text_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            # Guardar keywords
+            with open(keywords_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(keywords))
+
+            # Registrar como procesada
+            self.processed_news[news_id] = {
+                'title': entry['title'],
+                'url': url,
+                'date': entry.get('published', ''),
+                'processed_date': datetime.now().isoformat(),
+                'file_path': text_path
+            }
+            
+            processed_successfully = True
+
+            if processed_successfully:
+                # Enviar la noticia por todos los canales configurados
+                news_data = {
+                    'title': entry['title'],
+                    'url': url,
+                    'summary': article.summary,
+                    'content': article.text,
+                    'keywords': keywords
+                }
+                self.news_sender.send_all(news_data)
+                
+            return processed_successfully
+
+        except Exception as e:
+            self.logger.error(f"Error procesando noticia: {e}")
+            return False
+
+def main_loop():
+    processor = NewsProcessor()
+    logger = logging.getLogger(__name__)
+    
+    while True:
+        try:
+            start_time = datetime.now()
+            logger.info("Iniciando ciclo de revisión de feeds...")
+            
+            for rss_url in RSS_FEEDS:
+                try:
+                    feed = feedparser.parse(rss_url)
+                    for entry in feed.entries:
+                        processed_entry = process_feed_entry(entry)
+                        processor.process_news(processed_entry['link'], processed_entry)
+                except Exception as e:
+                    logger.error(f"Error procesando feed {rss_url}: {e}")
                     continue
-                # Obtener el título de la noticia
-                news_title = entry.get('ht_news_item_title', entry.get('title', entry.get('link', '')))
-                news_resumen = entry.get('ht_news_item_snippet', entry.get('description', ''))
-                news_date = entry.get('published', entry.get('pubDate', ''))
-                news_creator = entry.get('author', entry.get('dc_creator', entry.get('itunes_author', '')))
-                news_source = []
-                possible_news_source = ['media_description', 'ht_news_item_source', 'keywords',
-                                        'media_keywords', 'category', 'description']
-                for field in possible_news_source:
-                    if field in entry and entry[field]:
-                        news_source.extend(entry[field].split(','))
-                news_source_str = ', '.join(news_source)
-                news_keywords = []
-                possible_keyword_fields = ['media_description', 'ht_news_item_source', 'itunes_keywords',
-                                           'media_keywords', 'category', 'description']
-                for field in possible_keyword_fields:
-                    if field in entry and entry[field]:
-                        news_keywords.extend(entry[field].split(','))
-                news_keywords = [keyword.strip(', ') for keyword in news_keywords]
+            
+            processor.save_processed_news()
+            
+            # Calcular tiempo hasta próxima ejecución
+            elapsed_time = (datetime.now() - start_time).seconds
+            sleep_time = max(CHECK_INTERVAL - elapsed_time, 0)
+            logger.info(f"Ciclo completado. Esperando {sleep_time} segundos...")
+            time.sleep(sleep_time)
+            
+        except Exception as e:
+            logger.error(f"Error en el ciclo principal: {e}")
+            time.sleep(RETRY_INTERVAL)
 
-                # Procesar el enlace
-                if url:
-                    parsed_url = urlparse(url)
-                    url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, '', '', ''))
-                    if not re.match(r'^https?://', url):
-                        print(f'URL no válida: {url}')
-                        continue
-                    print("Procesando URL:", url)
-                    try:
-                        if url.endswith('.pdf') or url.endswith('.tar.gz') or url.endswith('.csv'):
-                            output_folder = get_output_directory(url)
-                            filename = download_file(url, output_directory)
-                            if filename:
-                                print(f"Archivo descargado: {filename}")
-                        else:
-                            # Obtener el contenido de la página web solo si no es un archivo descargable
-                            print('Obteniendo contenido de la página...')
-                            processed_urls.add(url)
-                            processed_count += 1
-                            driver.get(url)
-                            page_load_timeout = 180
-                            start_time = time.time()
-                            while time.time() - start_time < page_load_timeout:
-                                if driver.execute_script('return document.readyState') == 'complete':
-                                    break
-                                time.sleep(3)
-                            time.sleep(1)
-                            html = driver.page_source
-                            soup = BeautifulSoup(html, 'html.parser')
-                            parsed_url = urlparse(url)
-                            domain = parsed_url.netloc.strip()
-                            domain_directory = os.path.join(output_directory, domain)
-                            os.makedirs(domain_directory, exist_ok=True)
-                            elements = soup.find_all(elements_to_extract)
-                            combined_text = ''
-                            for element in elements:
-                                if any(unwanted_class in element.get('class', []) for unwanted_class in
-                                       unwanted_classes):
-                                    continue
-                                if element.name in unwanted_tags:
-                                    continue
-                                text = element.get_text()
-                                if text and not contains_unwanted_keywords(text):
-                                    combined_text += text + '\n'
-                            combined_text = f'Título: {news_title}\n' \
-                                            f'Resumen: {news_resumen}\n\n' \
-                                            f'Noticia Raspada: {combined_text}\n\n' \
-                                            f'Enlace: {url}\n' \
-                                            f'Palabra clave: {news_source}\n' \
-                                            f'Autor: {news_creator}\n' \
-                                            f'Fecha: {news_date}\n'
-
-                            # Obtener el identificador único para el archivo de texto
-                            unique_identifier = f"{news_title}"
-                            unique_filename = clean_filename(unique_identifier) + ".txt"
-                            text_file_path = os.path.join(domain_directory, unique_filename)
-
-                            # Leer el contenido actual del archivo (si existe)
-                            existing_text = ''
-                            if os.path.exists(text_file_path):
-                                with open(text_file_path, 'r', encoding='utf-8') as existing_file:
-                                    existing_text = existing_file.read()
-
-                            # Comparar el contenido existente con el nuevo texto y agregar solo el contenido no duplicado
-                            if combined_text not in existing_text:
-                                with open(text_file_path, 'w', encoding='utf-8') as text_file:
-                                    text_file.write(combined_text)
-
-                                # Guardar las palabras clave en un archivo separado
-                                #keywords_filename = f'{clean_filename(unique_identifier)}_keywords.txt'
-                                #keywords_file_path = os.path.join(domain_directory, keywords_filename)
-                                #with open(keywords_file_path, 'w', encoding='utf-8') as keywords_file:
-                                    #if news_source_str:
-                                        #keywords_file.write(news_source_str + '\n')
-
-                                #print(f'Detalles y palabras clave guardados en: {text_file_path}, {keywords_file_path}')
-
-                            # Descargar archivos si existen en el enlace
-                            links = soup.find_all('a', href=True)
-                            for link in links:
-                                file_url = link['href']
-                                if not file_url.startswith('http://') and not file_url.startswith('https://'):
-                                    file_url = urljoin(url, file_url)
-                                try:
-                                    # Descargar el archivo solo si es descargable
-                                    if file_url.endswith('.pdf') or file_url.endswith('.tar.gz') or file_url.endswith(
-                                            '.txt') or file_url.endswith('.xlsx') or file_url.endswith(
-                                                '.doc') or file_url.endswith('.csv'):
-                                        filename = download_file(file_url, domain_directory)
-                                        if filename:
-                                            print(f"Archivo descargado: {filename}")
-                                except Exception as e:
-                                    print(f'Error al descargar el archivo {file_url}: {e}')
-
-                    except WebDriverException as e:
-                        print(f'Error al acceder a la URL: {url}')
-                        print(f'Error: {e}')
-
-                else:
-                    print("No se encontró URL en esta entrada.")
-                time.sleep(1)
-
-driver.quit()
+if __name__ == "__main__":
+    try:
+        main_loop()
+    except KeyboardInterrupt:
+        logger.info("Programa terminado por el usuario")
+    finally:
+        driver.quit()
