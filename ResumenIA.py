@@ -1,108 +1,127 @@
-import os
-import re
-from transformers import BartForConditionalGeneration, BartTokenizer
-from langdetect import detect
-import traceback
-
-
-# Función para leer archivos de texto en un directorio
-def read_text_files_in_directory(directory):
-    news_text = []
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".txt"):
-                with open(os.path.join(root, file), "r", encoding="utf-8") as f:
-                    news_text.append((root, file, f.read()))  # Guarda la ruta, nombre del archivo y su contenido
-    return news_text
-
-
-# Directorio que contiene los archivos de noticias
-news_directory = "C:/Users/lucho/Downloads/NOTICIAS/RssFiltrado"
-
-# Lee las noticias
-news_data = read_text_files_in_directory(news_directory)
-
-# Inicializa el modelo BART y el tokenizador para español
-model_name = "facebook/bart-large-cnn"
-model = BartForConditionalGeneration.from_pretrained(model_name)
-tokenizer = BartTokenizer.from_pretrained("facebook/bart-large-cnn", src_lang="es", tgt_lang="es")
-
-# Expresiones regulares para extraer las entidades
-titulo_pattern = re.compile(r'Título: (.+)')
-enlace_pattern = re.compile(r'Enlace: (.+)')
-autor_pattern = re.compile(r'Autor: (.+)')
-fecha_pattern = re.compile(r'Fecha: (.+)')
-resumen_pattern = re.compile(r'Resumen: (.+)')  # Add a pattern for extracting the "Resumen" section
-
-# Directorio donde se guardarán los resúmenes manteniendo la estructura original
-output_base_directory = "C:/Users/lucho/Downloads/NOTICIAS/NoticiasResumidas"
-
-# Genera resúmenes y guarda en archivos de texto
-for root, file_name, news_text in news_data:
-    print("Procesando:", file_name)
-
-    # Detecta el idioma del texto utilizando langdetect
-    try:
-        detected_language = detect(news_text)
-        if detected_language == "es":
-            # Configura el modelo y el tokenizador para español
-            model.config.tgt_lang = "es"
-            tokenizer.src_lang = "es"
-            tokenizer.tgt_lang = "es"
-        elif detected_language == "en":
-            # Configura el modelo y el tokenizador para inglés
-            model.config.tgt_lang = "en"
-            tokenizer.src_lang = "en"
-            tokenizer.tgt_lang = "en"
-        elif detected_language == "gl":
-            # Configura el modelo y el tokenizador para gallego
-            model.config.tgt_lang = "gl"
-            tokenizer.src_lang = "gl"
-            tokenizer.tgt_lang = "gl"
-    except Exception as e:
-        traceback.print_exc()
-        # Establece un valor predeterminado en caso de error
-        model.config.tgt_lang = "es"
-        tokenizer.src_lang = "es"
-        tokenizer.tgt_lang = "es"
-
-    # Preprocesa el texto
-    preprocessed_text = news_text
-
-    # Utiliza expresiones regulares para extraer entidades
-    titulo_match = titulo_pattern.search(preprocessed_text)
-    enlace_match = enlace_pattern.search(preprocessed_text)
-    autor_match = autor_pattern.search(preprocessed_text)
-    fecha_match = fecha_pattern.search(preprocessed_text)
-    resumen_match = resumen_pattern.search(preprocessed_text)  # Find the "Resumen" section
-
-    titulo = titulo_match.group(1) if titulo_match else "Título no encontrado"
-    enlace = enlace_match.group(1) if enlace_match else "Enlace no encontrado"
-    autor = autor_match.group(1) if autor_match else "Autor no encontrado"
-    fecha = fecha_match.group(1) if fecha_match else "Fecha no encontrada"
-
-    # Extract the "Resumen" section
-    resumen_text = resumen_match.group(1) if resumen_match else "Resumen no encontrado"
-
-    # Generate the summary for the "Resumen" section
-    inputs = tokenizer.encode(resumen_text, return_tensors="pt", truncation=True)
-    summary_ids = model.generate(inputs, max_new_tokens=1024, min_new_tokens=512, length_penalty=1.3, num_beams=2,
-                                 early_stopping=True)
-    summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-
-    # Combine the summary generated with the entities
-    final_summary = f"Título: {titulo}\nResumen: {summary}\nEnlace: {enlace}\nAutor: {autor}\nFecha: {fecha}"
-
-    # Create the output path based on the original directory structure
-    relative_path = os.path.relpath(root, news_directory)  # Ruta relativa desde el directorio de noticias
-    output_subdirectory = os.path.join(output_base_directory, relative_path)
-    os.makedirs(output_subdirectory, exist_ok=True)  # Crea la estructura de directorios si no existe
-
-    # Guarda el resumen en un archivo de texto en la estructura de directorios correspondiente
-    output_file_path = os.path.join(output_subdirectory, f"{file_name}_summary.txt")
-    with open(output_file_path, "w", encoding="utf-8") as output_file:
-        output_file.write(final_summary)
-
-    print(f"Resumen guardado en:", output_file_path)  # Mensaje de depuración
-
-print("Resúmenes generados y guardados en archivos de texto en", output_base_directory)
+RSS_FEEDS = [
+    "https://www.binance.com/es/square",
+    "https://www.binance.com/en/feed/news/all",
+    "https://cointext.com/es/noticias/feed/",
+    "https://cointext.com/es/noticias/categoria/analisis/feed/",
+    "https://cointext.com/es/noticias/categoria/negocios/feed/",
+    "https://cointext.com/es/noticias/crimen/feed/",
+    "https://cointext.com/es/noticias/categoria/eventos/feed/",
+    "https://cointext.com/es/noticias/categoria/destacado/feed/",
+    "https://cointext.com/es/noticias/categoria/entrevistas/feed/",
+    "https://cointext.com/es/noticias/categoria/mercados/feed/",
+    "https://cointext.com/es/noticias/categoria/opinion/feed/",
+    "https://cointext.com/es/noticias/categoria/politica-y-regulacion/feed/",
+    "https://cointext.com/es/noticias/categoria/comunicado-de-prensa/feed/",
+    "https://cointext.com/es/noticias/categoria/encuestas-e-informes/feed/",
+    "https://cointext.com/es/noticias/categoria/tecnologia/feed/",
+    "https://cointext.com/es/noticias/tag/bitcoin/feed/",
+    "https://cointext.com/es/noticias/tag/blockchain/feed/",
+    "https://cointext.com/es/noticias/tag/altcoins/feed/",
+    "https://cointext.com/es/noticias/tag/ethereum/feed/",
+    "https://cointext.com/es/noticias/tag/ee-uu/feed/",
+    "https://cointext.com/es/noticias/tag/ripple/feed/",
+    "https://cointext.com/es/noticias/tag/litecoin/feed/",
+    "https://cointext.com/es/noticias/tag/mineria/feed/",
+    "https://es.investing.com/rss/news.rss",
+    "https://es.investing.com/rss/news_1.rss",
+    "https://es.investing.com/rss/news_2.rss",
+    "https://es.investing.com/rss/news_11.rss",
+    "https://es.investing.com/rss/news_12.rss",
+    "https://es.investing.com/rss/news_14.rss",
+    "https://es.investing.com/rss/news_25.rss",
+    "https://es.investing.com/rss/news_95.rss",
+    "https://es.investing.com/rss/news_285.rss",
+    "https://es.investing.com/rss/news_287.rss",
+    "https://es.investing.com/rss/news_288.rss",
+    "https://es.investing.com/rss/news_301.rss",
+    "https://es.investing.com/rss/news_462.rss",
+    "https://es.investing.com/rss/news_477.rss",
+    "https://es.investing.com/rss/central_banks.rss",
+    "https://es.investing.com/rss/159.rss",
+    "https://es.investing.com/rss/market_overview.rss",
+    "https://es.investing.com/rss/market_overview_Technical.rss",
+    "https://es.investing.com/rss/market_overview_Fundamental.rss",
+    "https://es.investing.com/rss/market_overview_Opinion.rss",
+    "https://es.investing.com/rss/market_overview_investing_ideas.rss",
+    "https://es.investing.com/rss/forex.rss",
+    "https://es.investing.com/rss/forex_Technical.rss",
+    "https://es.investing.com/rss/forex_Fundamental.rss",
+    "https://es.investing.com/rss/forex_Opinion.rss",
+    "https://es.investing.com/rss/forex_Signals.rss",
+    "https://es.investing.com/rss/286.rss",
+    "https://es.investing.com/rss/290.rss",
+    "https://es.investing.com/rss/stock.rss",
+    "https://es.investing.com/rss/stock_Technical.rss",
+    "https://es.investing.com/rss/stock_Fundamental.rss",
+    "https://es.investing.com/rss/stock_Opinion.rss",
+    "https://es.investing.com/rss/stock_stock_picks.rss",
+    "https://es.investing.com/rss/stock_Stocks.rss",
+    "https://es.investing.com/rss/stock_Indices.rss",
+    "https://es.investing.com/rss/stock_Futures.rss",
+    "https://es.investing.com/rss/stock_Options.rss",
+    "https://es.investing.com/rss/commodities.rss",
+    "https://es.investing.com/rss/commodities_Technical.rss",
+    "https://es.investing.com/rss/commodities_Fundamental.rss",
+    "https://es.investing.com/rss/commodities_Opinion.rss",
+    "https://es.investing.com/rss/commodities_Strategy.rss",
+    "https://es.investing.com/rss/commodities_Metals.rss",
+    "https://es.investing.com/rss/commodities_Energy.rss",
+    "https://es.investing.com/rss/commodities_Agriculture.rss",
+    "https://es.investing.com/rss/bonds.rss",
+    "https://es.investing.com/rss/bonds_Technical.rss",
+    "https://es.investing.com/rss/bonds_Fundamental.rss",
+    "https://es.investing.com/rss/bonds_Opinion.rss",
+    "https://es.investing.com/rss/bonds_Strategy.rss",
+    "https://es.investing.com/rss/bonds_Government.rss",
+    "https://es.investing.com/rss/bonds_Corporate.rss",    
+    "https://www.coruna.gal/web/es/rss/noticias",
+    "https://www.laopinioncoruna.es/rss/section/1244710",
+    "https://www.laopinioncoruna.es/rss/section/1612270",
+    "https://www.laopinioncoruna.es/rss/section/1612271",
+    "https://www.laopinioncoruna.es/rss/section/13576",
+    "https://www.laopinioncoruna.es/rss/section/13501",
+    "https://www.laopinioncoruna.es/rss/section/13563",
+    "https://www.laopinioncoruna.es/rss/section/13509",
+    "https://www.laopinioncoruna.es/rss/section/13571",
+    "https://www.laopinioncoruna.es/rss/section/1527708",
+    "https://www.laopinioncoruna.es/rss/section/13668",
+    "https://www.laopinioncoruna.es/rss/section/13659",
+    "https://www.lavozdegalicia.es/coruna/index.xml",
+    "https://www.lavozdegalicia.es/carballo/index.xml",
+    "https://ep00.epimg.net/rss/ccaa/galicia.xml",
+    "https://feeds2.feedburner.com/libertaddigital/nacional",
+    "https://e00-elmundo.uecdn.es/elmundo/rss/espana.xml",
+    "https://thedefiant.io/feed/",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
+    "https://cointelegraph.com/rss",
+    "https://cryptopotato.com/feed/",
+    "https://cryptoslate.com/feed/",
+    "https://cryptonews.com/news/feed/",
+    "https://smartliquidity.info/feed/",
+    "https://finance.yahoo.com/news/rssindex",
+    "https://www.cnbc.com/id/10000664/device/rss/rss.html",
+    "https://time.com/nextadvisor/feed/",
+    "https://benjaminion.xyz/newineth2/rss_feed.xml",
+    "https://www.boe.es/rss/canal.php?c=prestamos",
+    "https://www.aemet.es/es/noticias.rss",
+    "https://www.aemet.es/documentos_d/eltiempo/prediccion/avisos/rss/CAP_AFAZ711504_RSS.xml",
+    "https://www.aemet.es/documentos_d/eltiempo/prediccion/avisos/rss/CAP_AFAZ711503_RSS.xml",
+    "https://www.aemet.es/documentos_d/eltiempo/prediccion/avisos/rss/CAP_AFAZ711502_RSS.xml",
+    "https://www.aemet.es/documentos_d/eltiempo/prediccion/avisos/rss/CAP_AFAZ711501_RSS.xml",
+    "https://www.boe.es/rss/canal.php?c=imp_amb",
+    "https://xxicoruna.sergas.gal/_layouts/agoracentros/rss.aspx?seccion=SalaComunicacion",
+    "https://xxicoruna.sergas.gal/_layouts/agoracentros/rss.aspx?seccion=Novidades",
+    "https://www.boe.es/rss/canal.php?c=ccolaboracion",
+    "https://www.coruna.gal/web/es/rss/ociocultura",
+    "https://www.coruna.gal/web/es/rss/contenidos",    
+    "https://www.coruna.gal/web/es/rss/eventos",
+    "https://www.poderjudicial.es/cgpj/es/Poder-Judicial/Tribunal-Supremo/ch.Noticias-Judiciales.formato1/",
+    "https://www.poderjudicial.es/cgpj/es/Poder-Judicial/Audiencia-Nacional/ch.Noticias-Judiciales.formato1/",
+    "https://www.boe.es/rss/canal.php?c=tc",
+    "https://www.boe.es/rss/canal.php?c=fundaciones",
+    "https://www.boe.es/rss/canal.php?c=notariado",
+    "https://www.boe.es/rss/canal.php?c=premios",
+    "https://www.boe.es/rss/canal.php?c=ccolectivos",
+    "https://www.boe.es/rss/canal.php?c=becas",
+    "https://www.boe.es/rss/canal.php?c=ayudas",
+]
